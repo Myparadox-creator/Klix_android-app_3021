@@ -3,7 +3,6 @@ import 'dart:ui';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'dart:io' show Platform;
 import 'package:http/http.dart' as http;
 
 void main() {
@@ -99,12 +98,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
     try {
       // Determine the backend URL based on platform
-      String baseUrl = 'http://localhost:8000';
-      if (!kIsWeb && Platform.isAndroid) {
-        // Use 10.0.2.2 for emulator, but for physical device we need the computer's local IP.
-        // I'll set it here based on the detected IP: 10.221.110.33
-        // You can change this if your computer's IP changes.
-        baseUrl = 'http://10.221.110.33:8000'; 
+      // On web: use localhost (browser talks to backend on same machine)
+      // On Android (non-web): use your PC's LAN IP so the phone can reach it
+      String baseUrl;
+      if (kIsWeb) {
+        baseUrl = 'http://localhost:8000';
+      } else {
+        // Physical Android device — change this IP if your PC IP changes
+        baseUrl = 'http://10.221.110.33:8000';
       }
 
       // Connect to local backend
