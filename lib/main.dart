@@ -4,6 +4,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
+import 'package:file_picker/file_picker.dart';
+import 'package:desktop_drop/desktop_drop.dart';
+import 'package:cross_file/cross_file.dart';
 
 void main() {
   runApp(const KlixApp());
@@ -53,6 +56,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final List<ChatMessage> _messages = [];
   final GlobalKey<AnimatedListState> _listKey = GlobalKey<AnimatedListState>();
   bool _isTyping = false;
+  final List<XFile> _pickedFiles = [];
+  bool _isDragging = false;
 
   @override
   void initState() {
@@ -78,13 +83,71 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _scrollToBottom();
   }
 
+  Future<void> _pickFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: FileType.any,
+        withData: kIsWeb,
+      );
+      if (result != null && result.files.isNotEmpty) {
+        setState(() {
+          for (var file in result.files) {
+            if (kIsWeb && file.bytes != null) {
+              _pickedFiles.add(XFile.fromData(file.bytes!, name: file.name));
+            } else if (file.path != null) {
+              _pickedFiles.add(XFile(file.path!));
+            }
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not pick file: $e'),
+            backgroundColor: Colors.red.withOpacity(0.8),
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _handleSubmitted(String text) async {
-    if (text.trim().isEmpty) return;
+    if (text.trim().isEmpty && _pickedFiles.isEmpty) return;
+
+    // Build message with file names if any were attached
+    String fullText = text.trim();
+    String fileContents = "";
+    
+    if (_pickedFiles.isNotEmpty) {
+      final fileNames = _pickedFiles.map((f) => f.name).join(', ');
+      fullText = fullText.isEmpty
+          ? '📎 Attached: $fileNames'
+          : '$fullText\n📎 Attached: $fileNames';
+          
+      for (var file in _pickedFiles) {
+        try {
+          final bytes = await file.readAsBytes();
+          final content = utf8.decode(bytes);
+          fileContents += "\n\n--- File: ${file.name} ---\n$content";
+        } catch (e) {
+          fileContents += "\n\n--- File: ${file.name} ---\n[Binary or unreadable file]";
+        }
+      }
+    }
+    
+    final finalMessageText = text.trim() + (fileContents.isNotEmpty ? "\n$fileContents" : "");
+    String payloadMessage = finalMessageText.isEmpty && fileContents.isNotEmpty 
+        ? "Please analyze these files:$fileContents" 
+        : finalMessageText;
+        
+    setState(() => _pickedFiles.clear());
 
     _textController.clear();
     _addMessage(
       ChatMessage(
-        text: text,
+        text: fullText,
         isUser: true,
         timestamp: DateTime.now(),
       ),
@@ -113,7 +176,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         Uri.parse('$baseUrl/chat'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'message': text,
+          'message': payloadMessage,
           'user_id': 'flutter_user',
         }),
       );
@@ -194,10 +257,41 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          const AnimatedBackground(),
-          Column(
+      body: DropTarget(
+        onDragDone: (detail) {
+          setState(() {
+            _pickedFiles.addAll(detail.files);
+          });
+        },
+        onDragEntered: (detail) {
+          setState(() {
+            _isDragging = true;
+          });
+        },
+        onDragExited: (detail) {
+          setState(() {
+            _isDragging = false;
+          });
+        },
+        child: Stack(
+          children: [
+            const AnimatedBackground(),
+            if (_isDragging)
+              Container(
+                color: Colors.cyanAccent.withOpacity(0.1),
+                child: const Center(
+                  child: Text(
+                    'Drop files to analyze',
+                    style: TextStyle(
+                      color: Colors.cyanAccent,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      shadows: [Shadow(blurRadius: 10, color: Colors.blueAccent)],
+                    ),
+                  ),
+                ),
+              ),
+            Column(
             children: [
               Expanded(
                 child: AnimatedList(
@@ -231,6 +325,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ),
         ],
       ),
+      ),
     );
   }
 
@@ -244,8 +339,46 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             color: const Color(0xFF151525).withOpacity(0.6),
             border: Border(top: BorderSide(color: Colors.white.withOpacity(0.1))),
           ),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
+              // Picked files chips row
+              if (_pickedFiles.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: SizedBox(
+                    height: 34,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _pickedFiles.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        final file = _pickedFiles[index];
+                        return Chip(
+                          backgroundColor: const Color(0xFF2A2A3E),
+                          side: BorderSide(color: Colors.cyanAccent.withOpacity(0.4)),
+                          avatar: const Icon(Icons.insert_drive_file_rounded,
+                              color: Colors.cyanAccent, size: 16),
+                          label: Text(
+                            file.name,
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 12),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          deleteIcon: const Icon(Icons.close, size: 14,
+                              color: Colors.white38),
+                          onDeleted: () =>
+                              setState(() => _pickedFiles.removeAt(index)),
+                          padding: EdgeInsets.zero,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              Row(
+              children: [
               Container(
                 decoration: BoxDecoration(
                   color: const Color(0xFF2A2A3E).withOpacity(0.5),
@@ -254,7 +387,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 child: IconButton(
                   icon: const Icon(Icons.add_rounded),
                   color: Colors.cyanAccent,
-                  onPressed: () {},
+                  onPressed: _pickFile,
+                  tooltip: 'Attach file',
                 ),
               ),
               const SizedBox(width: 12),
@@ -311,6 +445,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 ),
               ),
             ],
+            ), // closes Row
+            ], // closes Column children
           ),
         ),
       ),
