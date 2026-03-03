@@ -58,6 +58,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   bool _isTyping = false;
   final List<XFile> _pickedFiles = [];
   bool _isDragging = false;
+  double _fontSize = 15.0;
+  String _userName = 'flutter_user';
 
   @override
   void initState() {
@@ -119,6 +121,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     // Build message with file names if any were attached
     String fullText = text.trim();
     String fileContents = "";
+    List<String> base64Images = [];
     
     if (_pickedFiles.isNotEmpty) {
       final fileNames = _pickedFiles.map((f) => f.name).join(', ');
@@ -129,8 +132,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       for (var file in _pickedFiles) {
         try {
           final bytes = await file.readAsBytes();
-          final content = utf8.decode(bytes);
-          fileContents += "\n\n--- File: ${file.name} ---\n$content";
+          
+          final ext = file.name.split('.').last.toLowerCase();
+          if (['png', 'jpg', 'jpeg', 'gif', 'webp'].contains(ext)) {
+            final base64String = base64Encode(bytes);
+            base64Images.add(base64String);
+            fileContents += "\n\n--- Image: ${file.name} ---";
+          } else {
+            final content = utf8.decode(bytes);
+            fileContents += "\n\n--- File: ${file.name} ---\n$content";
+          }
         } catch (e) {
           fileContents += "\n\n--- File: ${file.name} ---\n[Binary or unreadable file]";
         }
@@ -168,7 +179,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         baseUrl = 'http://localhost:8000';
       } else {
         // Physical Android device — change this IP if your PC IP changes
-        baseUrl = 'http://10.221.110.33:8000';
+        baseUrl = 'http://10.17.84.194:8000';
       }
 
       // Connect to local backend
@@ -177,7 +188,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'message': payloadMessage,
-          'user_id': 'flutter_user',
+          'user_id': _userName,
+          if (base64Images.isNotEmpty) 'images': base64Images,
         }),
       );
 
@@ -253,7 +265,52 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         actions: [
           IconButton(
             icon: const Icon(Icons.settings_outlined, color: Colors.white70),
-            onPressed: () {},
+            onPressed: () async {
+              final result = await Navigator.push<Map<String, dynamic>>(
+                context,
+                PageRouteBuilder(
+                  pageBuilder: (context, animation, secondaryAnimation) =>
+                      SettingsScreen(
+                        fontSize: _fontSize,
+                        userName: _userName,
+                        messageCount: _messages.length,
+                      ),
+                  transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                    return SlideTransition(
+                      position: animation.drive(
+                        Tween(begin: const Offset(1.0, 0.0), end: Offset.zero)
+                            .chain(CurveTween(curve: Curves.easeOutCubic)),
+                      ),
+                      child: child,
+                    );
+                  },
+                ),
+              );
+              if (result != null && mounted) {
+                setState(() {
+                  if (result.containsKey('fontSize')) {
+                    _fontSize = result['fontSize'] as double;
+                  }
+                  if (result.containsKey('userName')) {
+                    _userName = result['userName'] as String;
+                  }
+                  if (result['clearChat'] == true) {
+                    _messages.clear();
+                    _listKey.currentState?.removeAllItems(
+                      (context, animation) => const SizedBox.shrink(),
+                      duration: const Duration(milliseconds: 200),
+                    );
+                    Future.delayed(const Duration(milliseconds: 300), () {
+                      _addMessage(ChatMessage(
+                        text: "Chat cleared.\nI am Klix. Ready to assist.",
+                        isUser: false,
+                        timestamp: DateTime.now(),
+                      ));
+                    });
+                  }
+                });
+              }
+            },
           ),
         ],
       ),
@@ -307,7 +364,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       ).chain(CurveTween(curve: Curves.easeOutBack))),
                       child: FadeTransition(
                         opacity: animation,
-                        child: _MessageBubble(message: _messages[index]),
+                        child: _MessageBubble(message: _messages[index], fontSize: _fontSize),
                       ),
                     );
                   },
@@ -482,8 +539,9 @@ class GlowingTitle extends StatelessWidget {
 
 class _MessageBubble extends StatelessWidget {
   final ChatMessage message;
+  final double fontSize;
 
-  const _MessageBubble({required this.message});
+  const _MessageBubble({required this.message, this.fontSize = 15.0});
 
   @override
   Widget build(BuildContext context) {
@@ -536,9 +594,9 @@ class _MessageBubble extends StatelessWidget {
               ),
               child: Text(
                 message.text,
-                style: const TextStyle(
+                style: TextStyle(
                   color: Colors.white,
-                  fontSize: 15,
+                  fontSize: fontSize,
                   height: 1.4,
                 ),
               ),
@@ -741,6 +799,584 @@ class _TypingIndicatorState extends State<TypingIndicator> with SingleTickerProv
           );
         }),
       ),
+    );
+  }
+}
+
+// =============================================================================
+// Settings Screen
+// =============================================================================
+
+class SettingsScreen extends StatefulWidget {
+  final double fontSize;
+  final String userName;
+  final int messageCount;
+
+  const SettingsScreen({
+    super.key,
+    required this.fontSize,
+    required this.userName,
+    required this.messageCount,
+  });
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen>
+    with SingleTickerProviderStateMixin {
+  late double _fontSize;
+  late TextEditingController _userNameController;
+  bool _clearChat = false;
+
+  // Server status
+  bool _isCheckingServer = true;
+  bool _serverConnected = false;
+  String _modelName = '—';
+  String _providerName = '—';
+  bool _memoryEnabled = false;
+
+  late AnimationController _fadeController;
+  late Animation<double> _fadeAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _fontSize = widget.fontSize;
+    _userNameController = TextEditingController(text: widget.userName);
+    _fadeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _fadeAnimation = CurvedAnimation(
+      parent: _fadeController,
+      curve: Curves.easeOut,
+    );
+    _fadeController.forward();
+    _checkServerStatus();
+  }
+
+  @override
+  void dispose() {
+    _userNameController.dispose();
+    _fadeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _checkServerStatus() async {
+    setState(() => _isCheckingServer = true);
+    try {
+      String baseUrl;
+      if (kIsWeb) {
+        baseUrl = 'http://localhost:8000';
+      } else {
+        baseUrl = 'http://10.17.84.194:8000';
+      }
+      final response = await http.get(Uri.parse('$baseUrl/health')).timeout(
+            const Duration(seconds: 5),
+          );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        setState(() {
+          _serverConnected = true;
+          _modelName = data['model'] ?? '—';
+          _providerName = data['provider'] ?? '—';
+          _memoryEnabled = data['memory_enabled'] ?? false;
+          _isCheckingServer = false;
+        });
+      } else {
+        setState(() {
+          _serverConnected = false;
+          _isCheckingServer = false;
+        });
+      }
+    } catch (_) {
+      setState(() {
+        _serverConnected = false;
+        _isCheckingServer = false;
+      });
+    }
+  }
+
+  void _saveAndPop() {
+    Navigator.pop(context, {
+      'fontSize': _fontSize,
+      'userName': _userNameController.text.trim().isEmpty
+          ? 'flutter_user'
+          : _userNameController.text.trim(),
+      'clearChat': _clearChat,
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF050510),
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              color: Colors.black.withOpacity(0.2),
+            ),
+          ),
+        ),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white70),
+          onPressed: _saveAndPop,
+        ),
+        title: ShaderMask(
+          shaderCallback: (bounds) => const LinearGradient(
+            colors: [Colors.cyanAccent, Colors.purpleAccent],
+          ).createShader(bounds),
+          child: const Text(
+            'Settings',
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.5,
+              color: Colors.white,
+            ),
+          ),
+        ),
+        centerTitle: true,
+      ),
+      body: Stack(
+        children: [
+          const AnimatedBackground(),
+          FadeTransition(
+            opacity: _fadeAnimation,
+            child: ListView(
+              padding: const EdgeInsets.only(top: 100, left: 20, right: 20, bottom: 40),
+              children: [
+                // ─── Server Status ───
+                _buildSectionHeader(Icons.cloud_outlined, 'Server Status'),
+                const SizedBox(height: 10),
+                _buildCard(
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 12,
+                            height: 12,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: _isCheckingServer
+                                  ? Colors.amber
+                                  : _serverConnected
+                                      ? const Color(0xFF3FB950)
+                                      : const Color(0xFFF85149),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: (_isCheckingServer
+                                          ? Colors.amber
+                                          : _serverConnected
+                                              ? const Color(0xFF3FB950)
+                                              : const Color(0xFFF85149))
+                                      .withOpacity(0.6),
+                                  blurRadius: 8,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            _isCheckingServer
+                                ? 'Checking...'
+                                : _serverConnected
+                                    ? 'Connected'
+                                    : 'Disconnected',
+                            style: TextStyle(
+                              color: _isCheckingServer
+                                  ? Colors.amber
+                                  : _serverConnected
+                                      ? const Color(0xFF3FB950)
+                                      : const Color(0xFFF85149),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const Spacer(),
+                          GestureDetector(
+                            onTap: _checkServerStatus,
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Icon(
+                                Icons.refresh_rounded,
+                                color: Colors.cyanAccent.withOpacity(0.7),
+                                size: 20,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_serverConnected) ...[
+                        const SizedBox(height: 16),
+                        _buildInfoRow('Provider', _providerName.toUpperCase()),
+                        const SizedBox(height: 8),
+                        _buildInfoRow('Model', _modelName),
+                        const SizedBox(height: 8),
+                        _buildInfoRow('Memory', _memoryEnabled ? 'Enabled' : 'Disabled'),
+                      ],
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 28),
+
+                // ─── User Profile ───
+                _buildSectionHeader(Icons.person_outline_rounded, 'User Profile'),
+                const SizedBox(height: 10),
+                _buildCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Display Name',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.5),
+                          fontSize: 12,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white.withOpacity(0.08)),
+                        ),
+                        child: TextField(
+                          controller: _userNameController,
+                          style: const TextStyle(color: Colors.white, fontSize: 15),
+                          cursorColor: Colors.cyanAccent,
+                          decoration: InputDecoration(
+                            hintText: 'Enter your name...',
+                            hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 14),
+                            prefixIcon: Icon(
+                              Icons.alternate_email_rounded,
+                              color: Colors.cyanAccent.withOpacity(0.5),
+                              size: 20,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 28),
+
+                // ─── Appearance ───
+                _buildSectionHeader(Icons.text_fields_rounded, 'Appearance'),
+                const SizedBox(height: 10),
+                _buildCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Font Size',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.5),
+                              fontSize: 12,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.cyanAccent.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                  color: Colors.cyanAccent.withOpacity(0.3)),
+                            ),
+                            child: Text(
+                              _fontSize <= 13
+                                  ? 'Small'
+                                  : _fontSize <= 16
+                                      ? 'Medium'
+                                      : 'Large',
+                              style: const TextStyle(
+                                color: Colors.cyanAccent,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          activeTrackColor: Colors.cyanAccent,
+                          inactiveTrackColor: Colors.white.withOpacity(0.08),
+                          thumbColor: Colors.cyanAccent,
+                          overlayColor: Colors.cyanAccent.withOpacity(0.15),
+                          thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 7),
+                          trackHeight: 3,
+                        ),
+                        child: Slider(
+                          value: _fontSize,
+                          min: 12,
+                          max: 22,
+                          divisions: 10,
+                          onChanged: (val) => setState(() => _fontSize = val),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Text(
+                          'The quick brown fox jumps over the lazy dog.',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: _fontSize,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 28),
+
+                // ─── Chat ───
+                _buildSectionHeader(Icons.chat_bubble_outline_rounded, 'Chat'),
+                const SizedBox(height: 10),
+                _buildCard(
+                  child: Column(
+                    children: [
+                      _buildInfoRow('Messages', '${widget.messageCount}'),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _clearChat
+                              ? null
+                              : () {
+                                  showDialog(
+                                    context: context,
+                                    builder: (ctx) => AlertDialog(
+                                      backgroundColor: const Color(0xFF1A1A2E),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(16),
+                                        side: BorderSide(
+                                            color:
+                                                Colors.white.withOpacity(0.1)),
+                                      ),
+                                      title: const Text(
+                                        'Clear Chat?',
+                                        style: TextStyle(color: Colors.white),
+                                      ),
+                                      content: Text(
+                                        'This will delete all ${widget.messageCount} messages. This cannot be undone.',
+                                        style: TextStyle(
+                                            color:
+                                                Colors.white.withOpacity(0.6)),
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(ctx),
+                                          child: Text(
+                                            'Cancel',
+                                            style: TextStyle(
+                                                color: Colors.white
+                                                    .withOpacity(0.5)),
+                                          ),
+                                        ),
+                                        TextButton(
+                                          onPressed: () {
+                                            setState(
+                                                () => _clearChat = true);
+                                            Navigator.pop(ctx);
+                                          },
+                                          child: const Text(
+                                            'Clear',
+                                            style: TextStyle(
+                                                color: Color(0xFFF85149),
+                                                fontWeight: FontWeight.w600),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                          icon: Icon(
+                            _clearChat
+                                ? Icons.check_circle_rounded
+                                : Icons.delete_outline_rounded,
+                            size: 18,
+                          ),
+                          label: Text(_clearChat
+                              ? 'Chat will be cleared on exit'
+                              : 'Clear Chat History'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _clearChat
+                                ? const Color(0xFF3FB950).withOpacity(0.15)
+                                : const Color(0xFFF85149).withOpacity(0.12),
+                            foregroundColor: _clearChat
+                                ? const Color(0xFF3FB950)
+                                : const Color(0xFFF85149),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(
+                                color: (_clearChat
+                                        ? const Color(0xFF3FB950)
+                                        : const Color(0xFFF85149))
+                                    .withOpacity(0.3),
+                              ),
+                            ),
+                            elevation: 0,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 28),
+
+                // ─── About ───
+                _buildSectionHeader(Icons.info_outline_rounded, 'About'),
+                const SizedBox(height: 10),
+                _buildCard(
+                  child: Column(
+                    children: [
+                      _buildInfoRow('App', 'Klix'),
+                      const SizedBox(height: 8),
+                      _buildInfoRow('Version', '1.0.0'),
+                      const SizedBox(height: 8),
+                      _buildInfoRow('Engine', 'RAG + LLM'),
+                      const SizedBox(height: 8),
+                      _buildInfoRow('Platform', kIsWeb ? 'Web' : 'Android'),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 40),
+
+                // Save button
+                Center(
+                  child: Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      gradient: const LinearGradient(
+                        colors: [Colors.cyan, Colors.blueAccent],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.cyanAccent.withOpacity(0.3),
+                          blurRadius: 16,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: ElevatedButton(
+                      onPressed: _saveAndPop,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        shadowColor: Colors.transparent,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: const Text(
+                        'Save & Return',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(IconData icon, String title) {
+    return Row(
+      children: [
+        Icon(icon, color: Colors.cyanAccent.withOpacity(0.7), size: 18),
+        const SizedBox(width: 8),
+        Text(
+          title.toUpperCase(),
+          style: TextStyle(
+            color: Colors.cyanAccent.withOpacity(0.7),
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 2,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCard({required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A2E).withOpacity(0.6),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.06)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.5),
+            fontSize: 14,
+          ),
+        ),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
     );
   }
 }

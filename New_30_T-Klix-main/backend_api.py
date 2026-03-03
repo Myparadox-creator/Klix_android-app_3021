@@ -35,6 +35,7 @@ class ChatRequest(BaseModel):
     message: str
     user_id: str = "default_user"
     stream: bool = False
+    images: List[str] = []
 
 class ChatResponse(BaseModel):
     response: str
@@ -102,7 +103,7 @@ async def chat_endpoint(request: ChatRequest, background_tasks: BackgroundTasks)
         
         messages = [
             Message(role="system", content=system_content),
-            Message(role="user", content=user_input)
+            Message(role="user", content=user_input, images=request.images)
         ]
 
         # 3. Call LLM
@@ -128,7 +129,12 @@ async def chat_endpoint(request: ChatRequest, background_tasks: BackgroundTasks)
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "memory_enabled": memory_service.is_enabled if memory_service else False}
+    return {
+        "status": "ok",
+        "memory_enabled": memory_service.is_enabled if memory_service else False,
+        "model": config.current_model if config else "unknown",
+        "provider": config.default_provider.value if config else "unknown",
+    }
 
 if __name__ == "__main__":
     import uvicorn
