@@ -1,11 +1,11 @@
 # KLIX - AI Coding Assistant & Ecosystem
 
-> A powerful, multi-platform AI coding assistant with Flutter frontend, FastAPI backend, and memory-augmented intelligence. Combining cloud AI (Gemini, Groq), local models (Ollama), and persistent memory (Mem0) for personalized development support.
+> A powerful, multi-platform AI coding assistant with Flutter frontend, FastAPI backend, and memory-augmented intelligence. Combining cloud AI (Gemini, Groq), local models (Ollama), and persistent [...]
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python)
-![Dart](https://img.shields.io/badge/Dart-3.0+-blue?style=flat-square&logo=dart)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green?style=flat-square&logo=fastapi)
-![Flutter](https://img.shields.io/badge/Flutter-3.x-02569B?style=flat-square&logo=flutter)
+![Python](https://img.shields.io/badge/Python-3.11+-blue?style=flat-square&logo=python)
+![Dart](https://img.shields.io/badge/Dart-3.1+-blue?style=flat-square&logo=dart)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.113+-green?style=flat-square&logo=fastapi)
+![Flutter](https://img.shields.io/badge/Flutter-3.10+-02569B?style=flat-square&logo=flutter)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
 
 ---
@@ -23,8 +23,8 @@
 
 | Layer | Technology | Usage |
 |-------|-----------|-------|
-| **Frontend** | Flutter 3.x, Dart | Web & Mobile UI |
-| **Backend** | FastAPI, Python 3.10+ | REST API, WebSocket server |
+| **Frontend** | Flutter 3.10+, Dart 3.1+ | Web & Mobile UI |
+| **Backend** | FastAPI 0.113+, Python 3.11+ | REST API, WebSocket server |
 | **AI Models** | Gemini, Groq, Ollama | LLM inference |
 | **Memory** | Mem0, Qdrant | Vector embeddings & storage |
 | **TTS** | Microsoft Edge Neural | Voice synthesis |
@@ -176,9 +176,9 @@ High-performance, modular platform for scale.
 ## 🚀 Quick Start Guide
 
 ### Prerequisites
-- Python 3.10+ (backend)
-- Dart 3.0+ (Flutter)
-- Flutter SDK 3.x
+- Python 3.11+ (backend)
+- Dart 3.1+ (Flutter)
+- Flutter SDK 3.10+
 - Node.js (optional, for web tools)
 
 ### 1. Backend Setup
@@ -550,3 +550,7 @@ Built with ❤️ for developers who need intelligent, context-aware coding assi
 ---
 
 *"Intelligent coding assistance, personalized for you."*
+
+---
+
+<!-- TEST COMMIT: This is a test update (random commit #7) to validate your repository health capture workflow -->
